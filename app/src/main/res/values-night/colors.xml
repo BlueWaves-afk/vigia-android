@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="brandPrimary">#4E89FF</color>
+    <color name="brandDanger">#FF453A</color> <color name="brandSafe">#30D158</color>   <color name="colorBackground">#000000</color>
+
+    <color name="colorSurface">#1C1C1E</color>
+
+    <color name="colorSurfaceVariant">#2C2C2E</color>
+
+    <color name="textPrimary">#FFFFFF</color>
+    <color name="textSecondary">#A0A0A0</color>
+
+    <color name="textInverse">#000000</color>
+
+    <color name="iconTint">#FFFFFF</color>
+</resources>
