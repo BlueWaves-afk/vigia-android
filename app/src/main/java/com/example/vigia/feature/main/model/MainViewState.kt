@@ -13,6 +13,10 @@ data class MainViewState(
     val agentLog: String = "Initializing AI...",
     val isListening: Boolean = false,
 
+    // NEW
+    val headingUpEnabled: Boolean = true,
+    val isNavigating: Boolean = false,
+
     val hazardState: HazardState = HazardState(
         hasHazard = false,
         type = "none",

@@ -1,15 +1,18 @@
 package com.example.vigia.route
 
 import android.location.Location
+import com.example.vigia.BuildConfig
 import com.example.vigia.search.HazardDao
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
-import com.example.vigia.BuildConfig
+
 class RouteRepository(private val hazardDao: HazardDao) {
 
     private val azureApi: AzureRouteApi
-    // TODO: In production, secure this key (e.g., using BuildConfig or a backend proxy)
     private val azureKey = BuildConfig.AZURE_MAPS_KEY
+
+    // Tuning knobs (safe defaults)
+    private val HAZARD_MATCH_RADIUS_M = 40f
 
     init {
         val retrofit = Retrofit.Builder()
@@ -20,52 +23,77 @@ class RouteRepository(private val hazardDao: HazardDao) {
     }
 
     /**
-     * Calculates multiple routes and returns the Best FASTEST and Best SAFEST options.
-     * Includes cost estimation for vehicle wear/damage based on hazard type.
+     * Backwards-compatible API (your existing call sites keep working).
      */
     suspend fun calculateRoutes(
         startLat: Double, startLon: Double,
         endLat: Double, endLon: Double
-    ): Pair<VigiaRoute, VigiaRoute> { // Returns Pair(Fastest, Safest)
+    ): Pair<VigiaRoute, VigiaRoute> {
+        return calculateRoutes(
+            startLat = startLat,
+            startLon = startLon,
+            endLat = endLat,
+            endLon = endLon,
+            settings = RouteSettings()
+        )
+    }
+
+    /**
+     * New: route calculation with explicit settings (used by navigation reroute if you want).
+     * Still returns Pair(Fastest, Safest) based on:
+     * - Fastest = min travel time
+     * - Safest = min damageCost (tie-breaker: min travel time)
+     */
+    suspend fun calculateRoutes(
+        startLat: Double, startLon: Double,
+        endLat: Double, endLon: Double,
+        settings: RouteSettings
+    ): Pair<VigiaRoute, VigiaRoute> {
 
         val query = "$startLat,$startLon:$endLat,$endLon"
 
-        try {
-            // 1. CLOUD LAYER: Fetch multiple route alternatives (e.g., maxAlternatives=2 gives ~3 total)
-            val response = azureApi.getRoutes(key = azureKey, query = query, maxAlternatives = 2)
+        return try {
+            // 1) CLOUD: fetch alternatives from Azure
+            val response = azureApi.getRoutes(
+                key = azureKey,
+                query = query,
+                maxAlternatives = settings.maxAlternatives,
+                routeType = settings.routeType,
+                traffic = settings.traffic
+                // If you later extend AzureRouteApi with "avoid" or "travelMode", you can wire it here too.
+            )
 
-            // 2. LOCAL LAYER: Fetch Digital Twin (All known hazards)
+            // 2) LOCAL: known hazards
             val allHazards = hazardDao.getAllHazards()
 
-            // 3. THE VIGIA ANALYSIS: Cross-reference routes against hazards & calculate costs
+            // 3) ANALYZE: route-vs-hazard intersection + damage cost
             val analyzedRoutes = response.routes.mapIndexed { index, route ->
                 val points = route.legs.flatMap { it.points }
 
                 var hazardHits = 0
                 var totalDamageCost = 0.0
 
-                // Scan this route for any intersections with hazards
                 for (hazard in allHazards) {
-                    // Check if route passes near this hazard
                     for (point in points) {
                         val results = FloatArray(1)
-                        Location.distanceBetween(hazard.lat, hazard.lon, point.latitude, point.longitude, results)
+                        Location.distanceBetween(
+                            hazard.lat, hazard.lon,
+                            point.latitude, point.longitude,
+                            results
+                        )
 
-                        // If route passes within 40m of a hazard (avg road width + GPS drift)
-                        if (results[0] < 40) {
+                        if (results[0] < HAZARD_MATCH_RADIUS_M) {
                             hazardHits++
 
-                            // NEW: Assign estimated damage cost based on hazard type
-                            // These values are estimates for tire/suspension damage or risk
-                            totalDamageCost += when(hazard.type.lowercase()) {
-                                "pothole" -> 60.0       // Tire/Rim damage est.
-                                "ice" -> 250.0          // Accident risk est. (Weighted higher)
-                                "construction" -> 15.0  // Wear/tear/debris
-                                "accident" -> 100.0     // High delay/risk
-                                else -> 10.0            // General caution
+                            totalDamageCost += when (hazard.type.lowercase()) {
+                                "pothole" -> 60.0
+                                "ice" -> 250.0
+                                "construction" -> 15.0
+                                "accident" -> 100.0
+                                else -> 10.0
                             }
 
-                            break // Count this specific hazard only once per route (even if multiple points are near it)
+                            break // count each hazard only once per route
                         }
                     }
                 }
@@ -76,34 +104,35 @@ class RouteRepository(private val hazardDao: HazardDao) {
                     durationSeconds = route.summary.travelTimeInSeconds,
                     distanceMeters = route.summary.lengthInMeters,
                     hazardCount = hazardHits,
-                    damageCost = totalDamageCost, // Store the calculated cost
-                    isFastest = (index == 0) // First result from Azure is standard "Fastest"
+                    damageCost = totalDamageCost,
+                    isFastest = (index == 0) // Azure often returns standard best first, but we also compute min-time below
                 )
             }
 
-            // 4. SELECTION LOGIC
             if (analyzedRoutes.isEmpty()) return Pair(emptyRoute(), emptyRoute())
 
-            // A. Identify Fastest: Usually index 0, but we double-check time just in case
+            // Fastest = min travel time
             val fastest = analyzedRoutes.minByOrNull { it.durationSeconds } ?: analyzedRoutes[0]
 
-            // B. Identify Safest: Lowest Cost. If tied on cost, pick the faster one.
-            // If the fastest route has $0 cost, it is also the safest.
+            // Safest = min damage cost; tie-breaker by time
             val safest = analyzedRoutes.minWithOrNull(compareBy({ it.damageCost }, { it.durationSeconds })) ?: fastest
 
-            // Return copies with the flags set correctly for UI logic
-            return Pair(
+            Pair(
                 fastest.copy(isFastest = true),
                 safest.copy(isSafest = true)
             )
-
         } catch (e: Exception) {
             e.printStackTrace()
-            // Return empty routes on failure to prevent crash
-            return Pair(emptyRoute(), emptyRoute())
+            Pair(emptyRoute(), emptyRoute())
         }
     }
 
-    // Helper for error states
+    data class RouteSettings(
+        val routeType: String = "fastest",  // Azure supports fastest / shortest / etc.
+        val traffic: Boolean = true,
+        val maxAlternatives: Int = 2
+        // Future: val avoid: String? = null (tolls, ferries, highways), travelMode, etc.
+    )
+
     private fun emptyRoute() = VigiaRoute("error", emptyList(), 0, 0, 0, 0.0)
 }

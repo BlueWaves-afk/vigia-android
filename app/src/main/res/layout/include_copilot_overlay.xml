@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/copilotOverlayRoot"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:clickable="false"
+    android:focusable="false"
+    android:clipChildren="false"
+    android:clipToPadding="false">
+
+    <!-- Pulsing ring (ONLY while models load) -->
+    <View
+        android:id="@+id/copilotPulseRing"
+        android:layout_width="78dp"
+        android:layout_height="78dp"
+        android:layout_gravity="bottom|start"
+        android:layout_marginStart="18dp"
+        android:layout_marginBottom="118dp"
+        android:background="@drawable/bg_copilot_pulse_ring"
+        android:alpha="0"
+        android:visibility="gone" />
+
+    <!-- Orb button -->
+    <FrameLayout
+        android:id="@+id/copilotOrb"
+        android:layout_width="64dp"
+        android:layout_height="64dp"
+        android:layout_gravity="bottom|start"
+        android:layout_marginStart="18dp"
+        android:layout_marginBottom="120dp"
+        android:background="@drawable/bg_copilot_orb"
+        android:elevation="12dp"
+        android:clickable="true"
+        android:focusable="true">
+
+        <ImageView
+            android:id="@+id/copilotOrbIcon"
+            android:layout_width="34dp"
+            android:layout_height="34dp"
+            android:layout_gravity="center"
+            android:src="@drawable/ic_gemini_star"
+            android:contentDescription="@string/app_name" />
+    </FrameLayout>
+
+</FrameLayout>
